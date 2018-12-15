@@ -171,10 +171,7 @@ export default class Game extends React.Component {
       <p>This is the game page</p>
       <p className={this.state.leftHand}>boop</p>
       <p className={this.state.rightHand}>boop</p>
-
-      <Link href="/">
-        <a>Back</a>
-      </Link>
+ 
     </div>
    )
   }
