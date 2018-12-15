@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import React from 'react'
 import BufferLoader from '../lib/bufferloader'
-import {autoCorrelate, getUserMedia, gotStream} from '../lib/audio'
+import {autoCorrelate, getUserMedia, gotStream, createAudioMeter} from '../lib/audio'
 
 var ESCAPE_KEY = 27;
 var context;
@@ -23,24 +23,55 @@ function noteFromPitch( frequency ) {
 }
 
 function updatePitch(audioContext, analyser) {
+  if (!this.state.streamAcquired) {
+    this.setState({"streamAcquired":  true});
+  }
   analyser.getFloatTimeDomainData(buf);
   var ac = autoCorrelate(buf, 44100);
 
   if (ac == -1) {
 
   } else {
-    var note = noteFromPitch(ac);
-    note = noteStrings[note%12];
+    // var note = noteFromPitch(ac);
+    // note = noteStrings[note%12];
+    // this.setState({"currentPitch": ac});
   }
 
   rafID = window.requestAnimationFrame( updatePitch.bind(this, audioContext, analyser) );
 }
 
+function handleSound(volume) {
+  setTimeout(() => { this.setState({'leftHand': 'down'}) }, 0);
+  setTimeout(() => { this.setState({'leftHand': 'up'}) }, 100);
+  this.setState({'lastPitch': this.state.currentPitch});
+  recording.push(this.audioCtx.currentTime);
+}
+
+function debounce(func, wait, immediate) {
+  var timeout;
+  return function() {
+    var context = this, args = arguments;
+    var later = function() {
+      timeout = null;
+      if (!immediate) func.apply(context, args);
+    };
+    var callNow = immediate && !timeout;
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+    if (callNow) func.apply(context, args);
+  };
+};
 
 export default class Game extends React.Component {
   state = {
     "leftHand": "up",
-    "rightHand": "up"
+    "rightHand": "up",
+    "streamAcquired": false,
+    "ready": false,
+    "judging": false,
+    "level": 1,
+    "result": "",
+    "playing": false
   }
 
   componentDidMount() {
@@ -60,7 +91,7 @@ export default class Game extends React.Component {
           "optional": []
         },
       },
-      gotStream(this.audioCtx, updatePitch)
+      gotStream(this.audioCtx, updatePitch.bind(this), debounce(handleSound.bind(this), 40, true))
     );
 
 
@@ -76,7 +107,7 @@ export default class Game extends React.Component {
         this.bongo0 = this.bufferLoader.bufferList[0];
         this.bongo1 = this.bufferLoader.bufferList[1];
 
-        // setTimeout(() => {this.playSong1();}, 30);
+        this.setState({"ready": true})
       }
     );
 
@@ -116,14 +147,15 @@ export default class Game extends React.Component {
     setTimeout(() => { this.setState({'rightHand': 'up'}) }, time*1100);
   }
 
-  judgement() {
+  startJudging() {
     console.log("judging");
+    this.setState({"judging": true})
     recording = [];
 
-    setTimeout(() => {this.finalJudgement()}, 3000);
+    setTimeout(() => {this.finishJudging()}, 3000);
   }
 
-  finalJudgement() {
+  finishJudging() {
     var normalizedTiming;
     var first = recording[0];
 
@@ -137,14 +169,33 @@ export default class Game extends React.Component {
     console.log('yourtime:', normalizedTiming);
 
     var difference = song.map((x, i) => {
+      if (isNaN(normalizedTiming[i])) {
+        return 0;
+      }
       return 1 - Math.abs(x - normalizedTiming[i]);
     });
 
     console.log('difference:', difference);
+
+    var score = 0;
+    var sum = difference.reduce((a,b) => {return a+b}, 0);
+    score = Math.round((sum / song.length) * 100);
+
+    this.setState({
+      'score': score,
+      'result': this.scoreInterpretation(score),
+      'judging': false,
+      'playing': false
+    });
   }
 
   playSong1() {
     var startTime = this.audioCtx.currentTime + 0.100;
+    var songDuration = 1800;
+    this.setState({
+      "playing": true,
+      "result": "",
+    });
 
     this.playLeftBongo(startTime);
     this.playLeftBongo(startTime + 0.5*quarterNoteTime);
@@ -157,7 +208,33 @@ export default class Game extends React.Component {
 
     this.playRightBongo(startTime + 3*quarterNoteTime);
 
-    setTimeout(() => {this.judgement()}, 1800);
+    setTimeout(() => {this.startJudging()}, songDuration);
+  }
+
+  scoreInterpretation(score) {
+    if (score > 90) {
+      this.setState({"levelCleared": true});
+      return "REALLY GOOD!"
+    } else if (score > 80) {
+      this.setState({"levelCleared": true});
+      return "NICE, BUT COULD BE BETTER"
+    } else if (score > 50) {
+      return "I THINK IT SOUNDED KINDA THE SAME? TRY AGAIN!"
+    } else {
+      return "THAT SOUNDED NOTHING LIKE WHAT I DID! TRY AGAIN!"
+    }
+  }
+
+  nextLevel() {
+    tempo += 20;
+    quarterNoteTime = 60 / tempo;
+    this.setState({
+      score: 0,
+      level: this.state.level + 1,
+      result: '',
+      playing: false,
+      levelCleared: false
+    });
   }
 
   render() {
@@ -169,8 +246,42 @@ export default class Game extends React.Component {
         }`}
       </style>
       <p>This is the game page</p>
+
       <p className={this.state.leftHand}>boop</p>
       <p className={this.state.rightHand}>boop</p>
+
+      {
+        this.state.streamAcquired && this.state.ready ?
+          !this.state.playing ?
+            !this.state.levelCleared ?
+              <button onClick={this.playSong1.bind(this)}>START</button>
+            :
+              ""
+          :
+           ""
+        :
+        "Waiting for assets and microphone permissions."
+      }
+      <br/>
+
+      <div className="judging">
+        { this.state.judging ? "I AM JUDGING NOW" : ""}
+      </div>
+
+      <div className="result">
+        { this.state.result }
+      </div>
+
+      <div className="level">
+        Level: { this.state.level }
+      </div>
+
+      {
+        this.state.score > 80 ?
+        <button onClick={this.nextLevel.bind(this)}>NEXT LEVEL</button>
+        :
+        ""
+      }
 
       <Link href="/">
         <a>Back</a>
